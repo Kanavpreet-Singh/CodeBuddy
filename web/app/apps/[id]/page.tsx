@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { auth } from "@/auth";
 import FileViewer from "@/components/FileViewer";
 import RunPanel from "@/components/RunPanel";
+import StatusPill from "@/components/StatusPill";
 import { apiFetch } from "@/lib/api";
 
 type FileMeta = { path: string; purpose: string | null; sizeBytes: number | null };
@@ -30,48 +31,64 @@ export default async function AppDetailPage({ params }: { params: Promise<{ id: 
   const app: AppDetail = await res.json();
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-6 py-16">
-      <Link href="/apps" className="text-sm underline opacity-70 hover:opacity-100">
+    <main className="mx-auto max-w-4xl px-5 py-12 sm:px-8">
+      <Link href="/apps" className="font-mono text-xs text-muted transition-colors hover:text-ink">
         ← My apps
       </Link>
 
-      <div className="mt-4 flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">{app.name ?? "Untitled app"}</h1>
-        <span className="text-xs uppercase tracking-wide opacity-50">{app.status}</span>
-      </div>
-      {app.description && <p className="mt-1 text-sm opacity-70">{app.description}</p>}
-      {app.techstack && (
-        <p className="mt-2 text-xs uppercase tracking-wide opacity-50">{app.techstack}</p>
-      )}
+      <header className="mt-5 flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="font-display text-3xl font-semibold tracking-tight">
+            {app.name ?? "Untitled app"}
+          </h1>
+          {app.description && <p className="mt-2 max-w-xl text-muted">{app.description}</p>}
+          {app.techstack && (
+            <div className="mt-4 flex flex-wrap gap-1.5">
+              {app.techstack.split(/[,·]/).map((t) => (
+                <span key={t} className="chip">
+                  {t.trim()}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+        <StatusPill status={app.status} />
+      </header>
 
       {app.status === "ERROR" && app.errorMessage && (
-        <p className="mt-4 rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-600 dark:text-red-400">
-          {app.errorMessage}
-        </p>
-      )}
-
-      {app.features?.length > 0 && (
-        <div className="mt-6">
-          <h2 className="text-xs font-semibold uppercase tracking-wide opacity-50">Features</h2>
-          <ul className="mt-1 list-disc pl-5 text-sm">
-            {app.features.map((f) => (
-              <li key={f}>{f}</li>
-            ))}
-          </ul>
+        <div className="mt-6 rounded-xl border border-danger/30 bg-danger/5 p-4">
+          <p className="text-sm font-medium text-danger">This build failed</p>
+          <p className="mt-2 break-words font-mono text-xs leading-relaxed text-danger/85">
+            {app.errorMessage}
+          </p>
         </div>
       )}
 
       {app.status === "DONE" && (
-        <div className="mt-6">
-          <h2 className="text-xs font-semibold uppercase tracking-wide opacity-50">Run</h2>
+        <section className="mt-10">
+          <p className="kicker mb-3">Run</p>
           <RunPanel appId={app.id} />
-        </div>
+        </section>
       )}
 
-      <div className="mt-6">
-        <h2 className="text-xs font-semibold uppercase tracking-wide opacity-50">Files</h2>
+      {app.features?.length > 0 && (
+        <section className="mt-10">
+          <p className="kicker mb-3">Features</p>
+          <ul className="flex flex-wrap gap-x-6 gap-y-2 text-sm text-ink">
+            {app.features.map((f) => (
+              <li key={f} className="flex items-center gap-2">
+                <span className="h-1 w-1 rounded-full bg-accent" />
+                {f}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      <section className="mt-10">
+        <p className="kicker mb-3">Files</p>
         <FileViewer appId={app.id} files={app.files ?? []} />
-      </div>
+      </section>
     </main>
   );
 }

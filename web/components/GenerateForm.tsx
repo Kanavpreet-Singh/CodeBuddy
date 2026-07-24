@@ -19,12 +19,9 @@ type Usage = { model: string; inputTokens: number; outputTokens: number; estimat
 
 type Status = "idle" | "running" | "done" | "error";
 
-type Phase = "pending" | "active" | "done";
+type StageState = "pending" | "active" | "done";
 
-function phaseState(reached: boolean, active: boolean): Phase {
-  if (reached) return "done";
-  return active ? "active" : "pending";
-}
+const EXAMPLES = ["a todo app", "markdown notes with search", "a url shortener", "a pomodoro timer"];
 
 export default function GenerateForm() {
   const [prompt, setPrompt] = useState("");
@@ -55,7 +52,7 @@ export default function GenerateForm() {
     let eventName = "message";
     const dataLines: string[] = [];
     for (const line of block.split("\n")) {
-      if (line.startsWith(":")) continue; // SSE comment / heartbeat
+      if (line.startsWith(":")) continue;
       if (line.startsWith("event:")) eventName = line.slice(6).trim();
       else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
     }
@@ -71,18 +68,14 @@ export default function GenerateForm() {
     if (eventName === "created") {
       setAppId((data.id as string) ?? null);
     } else if (eventName === "node") {
-      if (data.node === "planner" && data.plan) {
-        setPlan(data.plan as Plan);
-      } else if (data.node === "architect") {
-        setStepCount(data.stepCount as number);
-      } else if (data.node === "coder") {
-        setCoder({ step: data.step as number, total: data.total as number });
-      }
+      if (data.node === "planner" && data.plan) setPlan(data.plan as Plan);
+      else if (data.node === "architect") setStepCount(data.stepCount as number);
+      else if (data.node === "coder") setCoder({ step: data.step as number, total: data.total as number });
     } else if (eventName === "usage") {
       setUsage(data as unknown as Usage);
     } else if (eventName === "done") {
       if (data.status === "ERROR") {
-        setError((data.message as string) ?? "Unknown error");
+        setError((data.message as string) ?? "Something went wrong.");
         setStatus("error");
       } else {
         setStatus("done");
@@ -109,21 +102,17 @@ export default function GenerateForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt, model: selectedModel || undefined }),
       });
-      if (!res.ok || !res.body) {
-        throw new Error(`Request failed: ${res.status}`);
-      }
+      if (!res.ok || !res.body) throw new Error(`Request failed (${res.status})`);
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
-
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
-
         const blocks = buffer.split("\n\n");
-        buffer = blocks.pop() ?? ""; // keep the incomplete trailing block
+        buffer = blocks.pop() ?? "";
         for (const block of blocks) handleBlock(block);
       }
     } catch (err) {
@@ -132,111 +121,169 @@ export default function GenerateForm() {
     }
   }
 
-  const plannerPhase = phaseState(plan !== null, running);
-  const architectPhase = phaseState(stepCount !== null, running && plan !== null);
-  const coderDone = status === "done";
-  const coderPhase = phaseState(coderDone, running && stepCount !== null);
+  const done = status === "done";
+  const plannerState: StageState = plan ? "done" : running ? "active" : "pending";
+  const architectState: StageState =
+    stepCount !== null ? "done" : running && plan ? "active" : "pending";
+  const coderState: StageState = done ? "done" : running && stepCount !== null ? "active" : "pending";
 
   return (
-    <div className="mt-8 flex flex-col gap-8">
-      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+    <div className="mt-10 flex flex-col gap-6">
+      {/* Build console */}
+      <form onSubmit={handleSubmit} className="panel overflow-hidden">
+        <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-line" />
+          <span className="kicker">new build</span>
+        </div>
         <textarea
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
-          placeholder="Describe the app you want, e.g. 'A CLI todo app in Python'"
+          placeholder="Describe the app you want to build…"
           rows={3}
           disabled={running}
-          className="w-full resize-y rounded-lg border border-black/15 bg-transparent px-4 py-3 text-sm outline-none focus:border-black/40 disabled:opacity-60 dark:border-white/15 dark:focus:border-white/40"
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSubmit(e);
+          }}
+          className="w-full resize-y bg-transparent px-4 py-4 text-[0.98rem] leading-relaxed text-ink outline-none placeholder:text-faint disabled:opacity-60"
         />
-        <div className="flex items-center gap-3">
-          <button
-            type="submit"
-            disabled={running || !prompt.trim()}
-            className="rounded-lg bg-foreground px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
-          >
-            {running ? "Building…" : "Build it"}
-          </button>
-          <label className="flex items-center gap-2 text-xs opacity-70">
-            Model
+        <div className="flex items-center justify-between gap-3 border-t border-line px-3 py-3">
+          <label className="flex items-center gap-2 rounded-lg border border-line bg-raised px-2.5 py-1.5">
+            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
+              <rect x="6" y="0.7" width="7.5" height="7.5" rx="1.2" transform="rotate(45 6 0.7)" fill="var(--color-accent)" />
+            </svg>
             <select
               value={selectedModel}
               onChange={(e) => setSelectedModel(e.target.value)}
               disabled={running || models.length === 0}
-              className="rounded-md border border-black/15 bg-transparent px-2 py-1.5 text-xs outline-none disabled:opacity-60 dark:border-white/15"
+              aria-label="Model"
+              className="cursor-pointer bg-transparent font-mono text-xs text-ink outline-none disabled:opacity-60"
             >
+              {models.length === 0 && <option>loading…</option>}
               {models.map((m) => (
-                <option key={m.id} value={m.id}>
+                <option key={m.id} value={m.id} className="bg-panel text-ink">
                   {m.label}
                 </option>
               ))}
             </select>
           </label>
+          <button type="submit" disabled={running || !prompt.trim()} className="btn-primary">
+            {running ? (
+              <>
+                <Spinner /> Building…
+              </>
+            ) : (
+              <>
+                Build
+                <span aria-hidden>→</span>
+              </>
+            )}
+          </button>
         </div>
       </form>
 
+      {/* Examples (idle only) */}
+      {status === "idle" && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="kicker mr-1">try</span>
+          {EXAMPLES.map((ex) => (
+            <button
+              key={ex}
+              onClick={() => setPrompt(ex)}
+              className="chip transition-colors hover:border-accent/50 hover:text-ink"
+            >
+              {ex}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Pipeline */}
       {status !== "idle" && (
-        <div className="flex flex-col gap-4">
-          <ol className="flex flex-col gap-3">
-            <PhaseRow phase={plannerPhase} label="Planning" />
-            <PhaseRow
-              phase={architectPhase}
+        <div className="panel animate-rise p-5 sm:p-6">
+          <p className="kicker mb-5">Build pipeline</p>
+          <ol className="relative">
+            <span aria-hidden className="absolute left-[7px] top-2 bottom-2 w-px bg-line" />
+            <Stage n="01" label="Planning" state={plannerState} note={plan ? "plan ready" : "reading your idea"} />
+            <Stage
+              n="02"
               label="Architecting"
-              detail={stepCount !== null ? `${stepCount} tasks` : undefined}
+              state={architectState}
+              note={stepCount !== null ? `${stepCount} tasks` : "breaking into tasks"}
             />
-            <PhaseRow
-              phase={coderPhase}
+            <Stage
+              n="03"
               label="Coding"
-              detail={coder ? `${Math.min(coder.step, coder.total)} / ${coder.total} files` : undefined}
+              state={coderState}
+              note={
+                coder
+                  ? `${Math.min(coder.step, coder.total)} / ${coder.total} files`
+                  : "writing files"
+              }
             />
           </ol>
 
-          {error && (
-            <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-600 dark:text-red-400">
-              <p className="break-words">{error}</p>
-              <p className="mt-2 text-xs opacity-80">
-                Tip: try a different model from the dropdown above and build again.
-              </p>
-            </div>
-          )}
-
           {usage && (
-            <p className="text-xs opacity-60">
-              {usage.model} · {usage.inputTokens.toLocaleString()} in /{" "}
-              {usage.outputTokens.toLocaleString()} out
+            <p className="mt-5 border-t border-line pt-4 font-mono text-[0.72rem] text-faint">
+              {usage.model} · {usage.inputTokens.toLocaleString()} in · {usage.outputTokens.toLocaleString()} out
               {usage.estimatedCostInr > 0 && <> · ~₹{usage.estimatedCostInr.toFixed(3)}</>}
             </p>
           )}
 
-          {coderDone && appId && (
-            <p className="text-sm text-green-700 dark:text-green-400">
-              Done.{" "}
-              <Link href={`/apps/${appId}`} className="underline">
-                Open your app →
-              </Link>
-            </p>
+          {done && appId && (
+            <Link href={`/apps/${appId}`} className="btn-primary mt-5">
+              Open your app →
+            </Link>
           )}
         </div>
       )}
 
-      {plan && (
-        <div className="rounded-xl border border-black/10 p-5 dark:border-white/10">
-          <h2 className="text-base font-semibold">{plan.name}</h2>
-          <p className="mt-1 text-sm opacity-70">{plan.description}</p>
-          <p className="mt-2 text-xs uppercase tracking-wide opacity-50">{plan.techstack}</p>
+      {/* Error */}
+      {error && (
+        <div className="animate-rise rounded-xl border border-danger/30 bg-danger/5 p-4">
+          <div className="flex items-center gap-2">
+            <span className="h-2 w-2 rounded-full bg-danger" />
+            <p className="text-sm font-medium text-danger">Build failed</p>
+          </div>
+          <p className="mt-2 break-words font-mono text-xs leading-relaxed text-danger/85">{error}</p>
+          <p className="mt-3 text-xs text-muted">
+            Try a different model from the selector above, then build again.
+          </p>
+        </div>
+      )}
 
-          <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide opacity-50">Features</h3>
-          <ul className="mt-1 list-disc pl-5 text-sm">
+      {/* Plan */}
+      {plan && (
+        <div className="panel animate-rise p-5 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="font-display text-lg font-semibold tracking-tight">{plan.name}</h2>
+              <p className="mt-1 max-w-lg text-sm text-muted">{plan.description}</p>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {plan.techstack.split(/[,·]/).map((t) => (
+                <span key={t} className="chip">
+                  {t.trim()}
+                </span>
+              ))}
+            </div>
+          </div>
+
+          <p className="kicker mt-6 mb-2">Features</p>
+          <ul className="flex flex-wrap gap-x-5 gap-y-1.5 text-sm text-ink">
             {plan.features.map((f) => (
-              <li key={f}>{f}</li>
+              <li key={f} className="flex items-center gap-2">
+                <span className="h-1 w-1 rounded-full bg-accent" />
+                {f}
+              </li>
             ))}
           </ul>
 
-          <h3 className="mt-4 text-xs font-semibold uppercase tracking-wide opacity-50">Files</h3>
-          <ul className="mt-1 flex flex-col gap-1 text-sm">
+          <p className="kicker mt-6 mb-2">Files</p>
+          <ul className="divide-y divide-line/70 overflow-hidden rounded-lg border border-line">
             {plan.files.map((f) => (
-              <li key={f.path}>
-                <code className="font-mono text-xs">{f.path}</code>
-                <span className="opacity-60"> — {f.purpose}</span>
+              <li key={f.path} className="flex items-baseline gap-3 px-3 py-2">
+                <code className="font-mono text-xs text-accent">{f.path}</code>
+                <span className="truncate text-xs text-muted">{f.purpose}</span>
               </li>
             ))}
           </ul>
@@ -246,18 +293,40 @@ export default function GenerateForm() {
   );
 }
 
-function PhaseRow({ phase, label, detail }: { phase: Phase; label: string; detail?: string }) {
+function Stage({
+  n,
+  label,
+  state,
+  note,
+}: {
+  n: string;
+  label: string;
+  state: StageState;
+  note: string;
+}) {
   const dot =
-    phase === "done"
-      ? "bg-green-500"
-      : phase === "active"
-        ? "animate-pulse bg-amber-500"
-        : "bg-black/20 dark:bg-white/20";
+    state === "done"
+      ? "border-accent bg-accent"
+      : state === "active"
+        ? "pulse-live border-live bg-live"
+        : "border-line bg-panel";
   return (
-    <li className="flex items-center gap-3 text-sm">
-      <span className={`h-2.5 w-2.5 rounded-full ${dot}`} />
-      <span className={phase === "pending" ? "opacity-50" : ""}>{label}</span>
-      {detail && <span className="opacity-50">· {detail}</span>}
+    <li className="relative flex items-center gap-4 py-2.5 pl-7">
+      <span className={`absolute left-0 top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full border-2 ${dot}`} />
+      <span className="font-mono text-xs text-faint">{n}</span>
+      <span className={`text-sm ${state === "pending" ? "text-muted" : "text-ink"}`}>{label}</span>
+      <span className="ml-auto font-mono text-xs text-muted">
+        {state === "done" ? "done" : state === "active" ? note : ""}
+      </span>
     </li>
+  );
+}
+
+function Spinner() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" className="animate-spin" aria-hidden>
+      <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="2" opacity="0.25" fill="none" />
+      <path d="M7 1.5a5.5 5.5 0 0 1 5.5 5.5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" />
+    </svg>
   );
 }

@@ -19,8 +19,14 @@ export default function RunPanel({ appId }: { appId: string }) {
     try {
       const res = await fetch(`/api/backend/apps/${appId}/run`, { method: "POST" });
       if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `Run failed (${res.status})`);
+        let detail = `Run failed (${res.status})`;
+        try {
+          const body = await res.json();
+          if (body?.detail) detail = body.detail;
+        } catch {
+          /* keep default */
+        }
+        throw new Error(detail);
       }
       const data = await res.json();
       setSandboxId(data.sandboxId ?? null);
@@ -49,48 +55,85 @@ export default function RunPanel({ appId }: { appId: string }) {
   const busy = state === "starting";
 
   return (
-    <div className="mt-4 flex flex-col gap-3">
-      <div className="flex items-center gap-3">
-        <button
-          onClick={run}
-          disabled={busy}
-          className="rounded-lg bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
-          {busy ? "Starting sandbox…" : "Run code"}
-        </button>
-        {state === "web" && (
-          <button
-            onClick={stop}
-            className="rounded-lg border border-black/15 px-4 py-2 text-sm transition-colors hover:bg-black/[.04] dark:border-white/15 dark:hover:bg-white/[.06]"
-          >
-            Stop
+    <div className="flex flex-col gap-4">
+      {(state === "idle" || state === "starting" || state === "error") && (
+        <div className="flex flex-wrap items-center gap-3">
+          <button onClick={run} disabled={busy} className="btn-primary">
+            {busy ? (
+              <>
+                <Spinner /> Starting sandbox…
+              </>
+            ) : (
+              <>▷ Run code</>
+            )}
           </button>
-        )}
-      </div>
+          <span className="text-xs text-muted">Boots your app in an isolated cloud sandbox.</span>
+        </div>
+      )}
 
       {error && (
-        <p className="rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-600 dark:text-red-400">
-          {error}
-        </p>
+        <div className="rounded-xl border border-danger/30 bg-danger/5 p-4">
+          <p className="text-sm font-medium text-danger">Couldn&apos;t run this app</p>
+          <p className="mt-2 break-words font-mono text-xs leading-relaxed text-danger/85">{error}</p>
+        </div>
       )}
 
       {state === "web" && previewUrl && (
-        <div className="overflow-hidden rounded-lg border border-black/10 dark:border-white/10">
-          <div className="flex items-center justify-between border-b border-black/10 px-3 py-1.5 text-xs dark:border-white/10">
-            <span className="opacity-60">Live preview</span>
-            <a href={previewUrl} target="_blank" rel="noopener noreferrer" className="underline opacity-70">
-              Open in new tab ↗
+        <div className="panel overflow-hidden">
+          <div className="flex items-center gap-3 border-b border-line bg-raised px-3 py-2">
+            <div className="flex gap-1.5">
+              <span className="h-2.5 w-2.5 rounded-full bg-danger/70" />
+              <span className="h-2.5 w-2.5 rounded-full bg-warn/70" />
+              <span className="h-2.5 w-2.5 rounded-full bg-live/70" />
+            </div>
+            <code className="min-w-0 flex-1 truncate rounded-md bg-ground px-2.5 py-1 font-mono text-[0.7rem] text-muted">
+              {previewUrl}
+            </code>
+            <a
+              href={previewUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="shrink-0 font-mono text-[0.7rem] text-muted transition-colors hover:text-ink"
+            >
+              open ↗
             </a>
+            <button
+              onClick={stop}
+              className="shrink-0 rounded-md border border-line px-2.5 py-1 font-mono text-[0.7rem] text-muted transition-colors hover:border-danger/50 hover:text-danger"
+            >
+              stop
+            </button>
           </div>
           <iframe src={previewUrl} className="h-[480px] w-full bg-white" title="App preview" />
         </div>
       )}
 
       {state === "script" && (
-        <pre className="max-h-[400px] overflow-auto rounded-lg border border-black/10 bg-black/[.02] p-4 text-xs leading-relaxed dark:border-white/10 dark:bg-white/[.02]">
-          <code>{output}</code>
-        </pre>
+        <div className="panel overflow-hidden">
+          <div className="flex items-center gap-2 border-b border-line bg-raised px-4 py-2">
+            <span className="h-2 w-2 rounded-full bg-live" />
+            <span className="kicker">output</span>
+            <button
+              onClick={() => setState("idle")}
+              className="ml-auto font-mono text-[0.7rem] text-faint transition-colors hover:text-ink"
+            >
+              clear
+            </button>
+          </div>
+          <pre className="scroll-thin max-h-[400px] overflow-auto bg-[#0c0e14] p-4 font-mono text-xs leading-relaxed text-live/90">
+            <code>{output || "(no output)"}</code>
+          </pre>
+        </div>
       )}
     </div>
+  );
+}
+
+function Spinner() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" className="animate-spin" aria-hidden>
+      <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="2" opacity="0.25" fill="none" />
+      <path d="M7 1.5a5.5 5.5 0 0 1 5.5 5.5" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" />
+    </svg>
   );
 }
