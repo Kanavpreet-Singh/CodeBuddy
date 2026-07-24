@@ -1,3 +1,4 @@
+from langchain_core.globals import set_debug, set_verbose
 from langgraph.graph import END, START, StateGraph
 
 from agent.prompts import architect_prompt, planner_prompt
@@ -39,5 +40,7 @@ graph_builder.add_edge("architect", END)
 agent_graph = graph_builder.compile()
 
 if __name__ == "__main__":
+    set_debug(True)
+    set_verbose(True)
     result = agent_graph.invoke({"user_prompt": "A CLI todo app in Python"})
     print(result["task_plan"].model_dump_json(indent=2))
