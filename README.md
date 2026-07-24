@@ -29,6 +29,9 @@ CodeBuddy is a full-stack product built around a [LangGraph](https://langchain-a
 **A saved app's detail page** — Run code boots it in a real E2B sandbox; the built-in file viewer lets you inspect any generated file without leaving the browser.
 ![App detail page with Run button and file viewer open on app.py](docs/screenshots/04-app-detail-run.png)
 
+**The sandbox, actually running** — a generated Flask calculator, live inside the browser-chrome preview, backed by its own public E2B URL.
+![Generated Simple Calculator app running live in the E2B sandbox preview, with working Add/Subtract buttons](docs/screenshots/06-run-live-preview.png)
+
 **The file viewer's code pane**, showing a generated HTML template.
 ![File viewer showing generated templates/index.html](docs/screenshots/05-file-viewer.png)
 
