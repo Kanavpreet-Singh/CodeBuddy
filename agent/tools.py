@@ -28,11 +28,27 @@ def safe_path_for_project(path: str) -> pathlib.Path:
     return p
 
 
+def _ensure_dir(directory: pathlib.Path) -> None:
+    """Creates `directory`, removing any stray file that occupies a path
+    component where a directory is needed (the coder occasionally writes a bare
+    file like `templates` before writing `templates/index.html`)."""
+    root = get_project_root().resolve()
+    directory = directory.resolve()
+    if directory == root:
+        return
+    cur = root
+    for part in directory.relative_to(root).parts:
+        cur = cur / part
+        if cur.exists() and not cur.is_dir():
+            cur.unlink()
+        cur.mkdir(exist_ok=True)
+
+
 @tool
 def write_file(path: str, content: str) -> str:
     """Writes content to a file at the specified path within the project root."""
     p = safe_path_for_project(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_dir(p.parent)
     with open(p, "w", encoding="utf-8") as f:
         f.write(content)
     return f"WROTE:{p}"

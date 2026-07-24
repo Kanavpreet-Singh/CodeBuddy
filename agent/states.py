@@ -1,6 +1,6 @@
 from typing import Optional, TypedDict
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 class File(BaseModel):
@@ -24,7 +24,6 @@ class ImplementationTask(BaseModel):
 class TaskPlan(BaseModel):
     implementation_steps: list[ImplementationTask] = Field(description="A list of steps to be taken to implement the task")
     plan: Optional[Plan] = Field(default=None, description="The original project plan this task plan was derived from")
-    model_config = ConfigDict(extra="allow")
 
 
 class CoderState(BaseModel):
@@ -35,6 +34,7 @@ class CoderState(BaseModel):
 
 class State(TypedDict):
     user_prompt: str
+    model_id: Optional[str]
     plan: Optional[Plan]
     task_plan: Optional[TaskPlan]
     coder_state: Optional[CoderState]

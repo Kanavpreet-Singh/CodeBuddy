@@ -1,7 +1,7 @@
 "use client";
 
-import { useRouter } from "next/navigation";
-import { useState } from "react";
+import Link from "next/link";
+import { useEffect, useState } from "react";
 
 type PlanFile = { path: string; purpose: string };
 
@@ -13,6 +13,10 @@ type Plan = {
   files: PlanFile[];
 };
 
+type ModelOption = { id: string; label: string };
+
+type Usage = { model: string; inputTokens: number; outputTokens: number; estimatedCostInr: number };
+
 type Status = "idle" | "running" | "done" | "error";
 
 type Phase = "pending" | "active" | "done";
@@ -23,16 +27,29 @@ function phaseState(reached: boolean, active: boolean): Phase {
 }
 
 export default function GenerateForm() {
-  const router = useRouter();
   const [prompt, setPrompt] = useState("");
+  const [models, setModels] = useState<ModelOption[]>([]);
+  const [selectedModel, setSelectedModel] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [plan, setPlan] = useState<Plan | null>(null);
   const [stepCount, setStepCount] = useState<number | null>(null);
   const [coder, setCoder] = useState<{ step: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [appId, setAppId] = useState<string | null>(null);
+  const [usage, setUsage] = useState<Usage | null>(null);
 
   const running = status === "running";
+
+  useEffect(() => {
+    fetch("/api/backend/models")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        setModels(d.models ?? []);
+        setSelectedModel(d.default ?? d.models?.[0]?.id ?? "");
+      })
+      .catch(() => {});
+  }, []);
 
   function handleBlock(block: string) {
     let eventName = "message";
@@ -61,14 +78,15 @@ export default function GenerateForm() {
       } else if (data.node === "coder") {
         setCoder({ step: data.step as number, total: data.total as number });
       }
+    } else if (eventName === "usage") {
+      setUsage(data as unknown as Usage);
     } else if (eventName === "done") {
       if (data.status === "ERROR") {
         setError((data.message as string) ?? "Unknown error");
         setStatus("error");
       } else {
         setStatus("done");
-        const id = (data.id as string) ?? appId;
-        if (id) router.push(`/apps/${id}`);
+        setAppId((data.id as string) ?? appId);
       }
     }
   }
@@ -83,12 +101,13 @@ export default function GenerateForm() {
     setCoder(null);
     setError(null);
     setAppId(null);
+    setUsage(null);
 
     try {
       const res = await fetch(`/api/backend/apps`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt, model: selectedModel || undefined }),
       });
       if (!res.ok || !res.body) {
         throw new Error(`Request failed: ${res.status}`);
@@ -129,13 +148,30 @@ export default function GenerateForm() {
           disabled={running}
           className="w-full resize-y rounded-lg border border-black/15 bg-transparent px-4 py-3 text-sm outline-none focus:border-black/40 disabled:opacity-60 dark:border-white/15 dark:focus:border-white/40"
         />
-        <button
-          type="submit"
-          disabled={running || !prompt.trim()}
-          className="self-start rounded-lg bg-foreground px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
-        >
-          {running ? "Building…" : "Build it"}
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="submit"
+            disabled={running || !prompt.trim()}
+            className="rounded-lg bg-foreground px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+          >
+            {running ? "Building…" : "Build it"}
+          </button>
+          <label className="flex items-center gap-2 text-xs opacity-70">
+            Model
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              disabled={running || models.length === 0}
+              className="rounded-md border border-black/15 bg-transparent px-2 py-1.5 text-xs outline-none disabled:opacity-60 dark:border-white/15"
+            >
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </form>
 
       {status !== "idle" && (
@@ -155,13 +191,29 @@ export default function GenerateForm() {
           </ol>
 
           {error && (
-            <p className="rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-600 dark:text-red-400">
-              {error}
+            <div className="rounded-lg border border-red-500/30 bg-red-500/5 px-4 py-3 text-sm text-red-600 dark:text-red-400">
+              <p className="break-words">{error}</p>
+              <p className="mt-2 text-xs opacity-80">
+                Tip: try a different model from the dropdown above and build again.
+              </p>
+            </div>
+          )}
+
+          {usage && (
+            <p className="text-xs opacity-60">
+              {usage.model} · {usage.inputTokens.toLocaleString()} in /{" "}
+              {usage.outputTokens.toLocaleString()} out
+              {usage.estimatedCostInr > 0 && <> · ~₹{usage.estimatedCostInr.toFixed(3)}</>}
             </p>
           )}
 
-          {coderDone && (
-            <p className="text-sm text-green-700 dark:text-green-400">Done. Opening your app…</p>
+          {coderDone && appId && (
+            <p className="text-sm text-green-700 dark:text-green-400">
+              Done.{" "}
+              <Link href={`/apps/${appId}`} className="underline">
+                Open your app →
+              </Link>
+            </p>
           )}
         </div>
       )}

@@ -7,13 +7,47 @@ from langgraph.graph import END, START, StateGraph
 from agent.prompts import architect_prompt, coder_system_prompt, planner_prompt
 from agent.states import CoderState, Plan, State, TaskPlan
 from agent.tools import get_current_directory, init_project_root, list_files, read_file, write_file
-from helper.llm import llm
+from helper.llm import default_model_id, make_llm
+
+coder_tools = [read_file, write_file, list_files, get_current_directory]
+
+# gpt-oss-120b occasionally emits reasoning text that Groq rejects as an
+# unparseable tool call (output_parse_failed). At temperature 0 that failure is
+# deterministic, so we retry a failed coder step with progressively higher
+# temperatures to break out of the bad sampling path.
+_CODER_RETRY_TEMPERATURES = [0.0, 0.4, 0.8]
+
+_llm_cache: dict[tuple[str, float], object] = {}
+_coder_agent_cache: dict[tuple[str, float], object] = {}
+
+
+def _model_id(state: State) -> str:
+    return state.get("model_id") or default_model_id()
+
+
+def _get_llm(model_id: str, temperature: float = 0.0):
+    key = (model_id, temperature)
+    if key not in _llm_cache:
+        _llm_cache[key] = make_llm(model_id, temperature)
+    return _llm_cache[key]
+
+
+def _get_coder_agent(model_id: str, temperature: float):
+    key = (model_id, temperature)
+    if key not in _coder_agent_cache:
+        _coder_agent_cache[key] = create_agent(
+            model=make_llm(model_id, temperature),
+            tools=coder_tools,
+            system_prompt=coder_system_prompt(),
+        )
+    return _coder_agent_cache[key]
 
 
 async def planner_agent(state: State) -> dict:
     """Converts user prompt into a structured Plan."""
     user_prompt = state["user_prompt"]
-    resp = await llm.with_structured_output(Plan).ainvoke(
+    model = _get_llm(_model_id(state))
+    resp = await model.with_structured_output(Plan, method="function_calling").ainvoke(
         planner_prompt(user_prompt)
     )
     if resp is None:
@@ -24,7 +58,8 @@ async def planner_agent(state: State) -> dict:
 async def architect_agent(state: State) -> dict:
     """Creates TaskPlan from Plan."""
     plan: Plan = state["plan"]
-    resp = await llm.with_structured_output(TaskPlan).ainvoke(
+    model = _get_llm(_model_id(state))
+    resp = await model.with_structured_output(TaskPlan, method="function_calling").ainvoke(
         architect_prompt(plan=plan.model_dump_json())
     )
     if resp is None:
@@ -34,12 +69,9 @@ async def architect_agent(state: State) -> dict:
     return {"task_plan": resp}
 
 
-coder_tools = [read_file, write_file, list_files, get_current_directory]
-coder_react_agent = create_agent(model=llm, tools=coder_tools, system_prompt=coder_system_prompt())
-
-
 async def coder_agent(state: State) -> dict:
     """LangGraph tool-using coder agent."""
+    model_id = _model_id(state)
     coder_state: CoderState = state.get("coder_state")
     if coder_state is None:
         init_project_root()
@@ -59,7 +91,18 @@ async def coder_agent(state: State) -> dict:
         "Use write_file(path, content) to save your changes."
     )
 
-    await coder_react_agent.ainvoke({"messages": [{"role": "user", "content": user_prompt}]})
+    last_error: Exception | None = None
+    for temperature in _CODER_RETRY_TEMPERATURES:
+        try:
+            await _get_coder_agent(model_id, temperature).ainvoke(
+                {"messages": [{"role": "user", "content": user_prompt}]}
+            )
+            last_error = None
+            break
+        except Exception as exc:  # retry transient tool-call parse failures
+            last_error = exc
+    if last_error is not None:
+        raise last_error
 
     coder_state.current_step_idx += 1
     return {"coder_state": coder_state}
