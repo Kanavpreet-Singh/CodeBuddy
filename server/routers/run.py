@@ -4,13 +4,14 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from server import db, sandbox
 from server.auth import get_current_user_id
+from server.ratelimit import rate_limit_run
 from server.storage import read_app_files
 
 router = APIRouter()
 
 
 @router.post("/api/apps/{app_id}/run")
-async def run_app_endpoint(app_id: str, user_id: str = Depends(get_current_user_id)):
+async def run_app_endpoint(app_id: str, user_id: str = Depends(rate_limit_run)):
     if not os.environ.get("E2B_API_KEY"):
         raise HTTPException(status_code=503, detail="Run mode is not configured (missing E2B_API_KEY)")
 

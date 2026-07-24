@@ -8,6 +8,7 @@ from agent.graph import agent_graph
 from agent.tools import set_project_root
 from server import db
 from server.auth import get_current_user_id
+from server.ratelimit import rate_limit_generation
 from server.storage import app_root, safe_file_path
 
 router = APIRouter()
@@ -18,7 +19,7 @@ class GenerateRequest(BaseModel):
 
 
 @router.post("/api/apps")
-async def create_app_endpoint(req: GenerateRequest, user_id: str = Depends(get_current_user_id)):
+async def create_app_endpoint(req: GenerateRequest, user_id: str = Depends(rate_limit_generation)):
     app_id = await db.create_app(user_id, req.prompt)
     project_root = app_root(user_id, app_id)
 
