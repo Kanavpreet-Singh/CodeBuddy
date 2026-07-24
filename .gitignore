@@ -12,3 +12,6 @@ wheels/
 # Environment variables
 .env
 
+# Coder agent output
+generated_project/
+
