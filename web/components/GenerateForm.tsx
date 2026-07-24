@@ -1,8 +1,7 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useState } from "react";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
 
 type PlanFile = { path: string; purpose: string };
 
@@ -24,13 +23,14 @@ function phaseState(reached: boolean, active: boolean): Phase {
 }
 
 export default function GenerateForm() {
+  const router = useRouter();
   const [prompt, setPrompt] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [plan, setPlan] = useState<Plan | null>(null);
   const [stepCount, setStepCount] = useState<number | null>(null);
   const [coder, setCoder] = useState<{ step: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [projectRoot, setProjectRoot] = useState<string | null>(null);
+  const [appId, setAppId] = useState<string | null>(null);
 
   const running = status === "running";
 
@@ -51,7 +51,9 @@ export default function GenerateForm() {
       return;
     }
 
-    if (eventName === "node") {
+    if (eventName === "created") {
+      setAppId((data.id as string) ?? null);
+    } else if (eventName === "node") {
       if (data.node === "planner" && data.plan) {
         setPlan(data.plan as Plan);
       } else if (data.node === "architect") {
@@ -64,8 +66,9 @@ export default function GenerateForm() {
         setError((data.message as string) ?? "Unknown error");
         setStatus("error");
       } else {
-        setProjectRoot((data.projectRoot as string) ?? null);
         setStatus("done");
+        const id = (data.id as string) ?? appId;
+        if (id) router.push(`/apps/${id}`);
       }
     }
   }
@@ -79,10 +82,10 @@ export default function GenerateForm() {
     setStepCount(null);
     setCoder(null);
     setError(null);
-    setProjectRoot(null);
+    setAppId(null);
 
     try {
-      const res = await fetch(`${API_URL}/api/generate`, {
+      const res = await fetch(`/api/backend/apps`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt }),
@@ -157,10 +160,8 @@ export default function GenerateForm() {
             </p>
           )}
 
-          {coderDone && projectRoot && (
-            <p className="text-sm text-green-700 dark:text-green-400">
-              Done. Files written to <code className="font-mono text-xs">{projectRoot}</code>
-            </p>
+          {coderDone && (
+            <p className="text-sm text-green-700 dark:text-green-400">Done. Opening your app…</p>
           )}
         </div>
       )}
