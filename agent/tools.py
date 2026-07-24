@@ -55,6 +55,36 @@ def write_file(path: str, content: str) -> str:
 
 
 @tool
+def edit_file(path: str, old_string: str, new_string: str) -> str:
+    """Makes a targeted edit to an existing file: replaces one exact occurrence of
+    old_string with new_string, leaving the rest of the file untouched. Use this
+    instead of write_file whenever you are fixing or adjusting part of a file that
+    already has correct content — it only touches the text you specify, so it can't
+    accidentally discard or regress unrelated working code. old_string must match
+    the current file content exactly (including whitespace/indentation) and must be
+    unique in the file; include a few surrounding lines if needed to make it unique.
+    """
+    p = safe_path_for_project(path)
+    if not p.exists():
+        return f"ERROR: {path} does not exist. Use write_file to create a new file."
+    content = p.read_text(encoding="utf-8")
+    count = content.count(old_string)
+    if count == 0:
+        return (
+            "ERROR: old_string was not found in the file. It must match the file's "
+            "current content exactly, including whitespace and line breaks. "
+            "Re-read the file with read_file and try again with the exact text."
+        )
+    if count > 1:
+        return (
+            f"ERROR: old_string matches {count} locations in the file, not 1. "
+            "Include more surrounding context so it uniquely identifies one location."
+        )
+    p.write_text(content.replace(old_string, new_string, 1), encoding="utf-8")
+    return f"EDITED:{p}"
+
+
+@tool
 def read_file(path: str) -> str:
     """Reads content from a file at the specified path within the project root."""
     p = safe_path_for_project(path)

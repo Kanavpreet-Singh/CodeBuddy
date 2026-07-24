@@ -4,12 +4,12 @@ from langchain.agents import create_agent
 from langchain_core.globals import set_debug, set_verbose
 from langgraph.graph import END, START, StateGraph
 
-from agent.prompts import architect_prompt, coder_system_prompt, planner_prompt
+from agent.prompts import architect_prompt, coder_system_prompt, fixer_prompt, planner_prompt
 from agent.states import CoderState, Plan, State, TaskPlan
-from agent.tools import get_current_directory, init_project_root, list_files, read_file, write_file
+from agent.tools import edit_file, get_current_directory, init_project_root, list_files, read_file, write_file
 from helper.llm import default_model_id, make_llm
 
-coder_tools = [read_file, write_file, list_files, get_current_directory]
+coder_tools = [read_file, write_file, edit_file, list_files, get_current_directory]
 
 # gpt-oss-120b occasionally emits reasoning text that Groq rejects as an
 # unparseable tool call (output_parse_failed). At temperature 0 that failure is
@@ -82,17 +82,21 @@ async def coder_agent(state: State) -> dict:
         return {"coder_state": coder_state, "status": "DONE"}
 
     current_task = steps[coder_state.current_step_idx]
-    existing_content = await read_file.ainvoke(current_task.filepath)
-
-    user_prompt = (
-        f"Task: {current_task.task_description}\n"
-        f"File: {current_task.filepath}\n"
-        f"Existing content:\n{existing_content}\n"
-        "Use write_file(path, content) to save your changes."
-    )
-
     last_error: Exception | None = None
     for temperature in _CODER_RETRY_TEMPERATURES:
+        # Re-read on every attempt: a prior failed attempt in this same loop may
+        # have already written partial changes to disk via edit_file/write_file,
+        # and the retry must build on that real current state, not a stale
+        # snapshot from before the failed attempt ran.
+        existing_content = await read_file.ainvoke(current_task.filepath)
+        user_prompt = (
+            f"Task: {current_task.task_description}\n"
+            f"File: {current_task.filepath}\n"
+            f"Existing content:\n{existing_content}\n"
+            "If this file already has content, prefer edit_file for a targeted change "
+            "over rewriting it with write_file. Use write_file only if the file is new "
+            "or the task genuinely requires replacing its full content."
+        )
         try:
             await _get_coder_agent(model_id, temperature).ainvoke(
                 {"messages": [{"role": "user", "content": user_prompt}]}
@@ -106,6 +110,25 @@ async def coder_agent(state: State) -> dict:
 
     coder_state.current_step_idx += 1
     return {"coder_state": coder_state}
+
+
+async def fix_agent(feedback: str, run_output: str | None = None, model_id: str | None = None) -> None:
+    """Patches the app already written to the current project root, given a
+    user's bug report. Reuses the coder's tool-using react agent — the fixer
+    isn't a scripted diff, it reads whatever files it decides are relevant via
+    list_files/read_file and rewrites them with write_file, same as the coder
+    does per implementation step, but driven by a single free-form task."""
+    model_id = model_id or default_model_id()
+    last_error: Exception | None = None
+    for temperature in _CODER_RETRY_TEMPERATURES:
+        try:
+            await _get_coder_agent(model_id, temperature).ainvoke(
+                {"messages": [{"role": "user", "content": fixer_prompt(feedback, run_output)}]}
+            )
+            return
+        except Exception as exc:
+            last_error = exc
+    raise last_error
 
 
 def route_after_coder(state: State) -> str:

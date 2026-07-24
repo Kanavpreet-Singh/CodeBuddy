@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 type PlanFile = { path: string; purpose: string };
 
@@ -17,10 +17,22 @@ type ModelOption = { id: string; label: string };
 
 type Usage = { model: string; inputTokens: number; outputTokens: number; estimatedCostInr: number };
 
+type ProgressResponse = {
+  stage?: string;
+  status?: string;
+  plan?: Plan;
+  stepCount?: number;
+  codingStep?: number;
+  codingTotal?: number;
+  usage?: Usage;
+  message?: string;
+};
+
 type Status = "idle" | "running" | "done" | "error";
 
 type StageState = "pending" | "active" | "done";
 
+const POLL_INTERVAL_MS = 1500;
 const EXAMPLES = ["a todo app", "markdown notes with search", "a url shortener", "a pomodoro timer"];
 
 export default function GenerateForm() {
@@ -35,6 +47,7 @@ export default function GenerateForm() {
   const [appId, setAppId] = useState<string | null>(null);
   const [usage, setUsage] = useState<Usage | null>(null);
 
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const running = status === "running";
 
   useEffect(() => {
@@ -48,40 +61,49 @@ export default function GenerateForm() {
       .catch(() => {});
   }, []);
 
-  function handleBlock(block: string) {
-    let eventName = "message";
-    const dataLines: string[] = [];
-    for (const line of block.split("\n")) {
-      if (line.startsWith(":")) continue;
-      if (line.startsWith("event:")) eventName = line.slice(6).trim();
-      else if (line.startsWith("data:")) dataLines.push(line.slice(5).trim());
-    }
-    if (dataLines.length === 0) return;
+  useEffect(() => {
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
+  }, []);
 
-    let data: Record<string, unknown>;
-    try {
-      data = JSON.parse(dataLines.join("\n"));
-    } catch {
-      return;
+  function stopPolling() {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
     }
+  }
 
-    if (eventName === "created") {
-      setAppId((data.id as string) ?? null);
-    } else if (eventName === "node") {
-      if (data.node === "planner" && data.plan) setPlan(data.plan as Plan);
-      else if (data.node === "architect") setStepCount(data.stepCount as number);
-      else if (data.node === "coder") setCoder({ step: data.step as number, total: data.total as number });
-    } else if (eventName === "usage") {
-      setUsage(data as unknown as Usage);
-    } else if (eventName === "done") {
-      if (data.status === "ERROR") {
-        setError((data.message as string) ?? "Something went wrong.");
-        setStatus("error");
-      } else {
-        setStatus("done");
-        setAppId((data.id as string) ?? appId);
+  function applyProgress(id: string, data: ProgressResponse) {
+    if (data.plan) setPlan(data.plan);
+    if (data.stepCount !== undefined) setStepCount(data.stepCount);
+    if (data.codingStep !== undefined) {
+      setCoder({ step: data.codingStep, total: data.codingTotal ?? 0 });
+    }
+    if (data.status === "DONE") {
+      if (data.usage) setUsage(data.usage);
+      setStatus("done");
+      setAppId(id);
+      stopPolling();
+    } else if (data.status === "ERROR") {
+      setError(data.message ?? "Something went wrong.");
+      setStatus("error");
+      stopPolling();
+    }
+  }
+
+  function startPolling(id: string) {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      try {
+        const res = await fetch(`/api/backend/apps/${id}/progress`);
+        if (!res.ok) return; // transient — try again next tick
+        const data: ProgressResponse = await res.json();
+        applyProgress(id, data);
+      } catch {
+        // network hiccup — keep polling
       }
-    }
+    }, POLL_INTERVAL_MS);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -102,19 +124,10 @@ export default function GenerateForm() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt, model: selectedModel || undefined }),
       });
-      if (!res.ok || !res.body) throw new Error(`Request failed (${res.status})`);
-
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = "";
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const blocks = buffer.split("\n\n");
-        buffer = blocks.pop() ?? "";
-        for (const block of blocks) handleBlock(block);
-      }
+      if (!res.ok) throw new Error(`Request failed (${res.status})`);
+      const data = await res.json();
+      setAppId(data.id);
+      startPolling(data.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setStatus("error");
@@ -202,7 +215,7 @@ export default function GenerateForm() {
         <div className="panel animate-rise p-5 sm:p-6">
           <p className="kicker mb-5">Build pipeline</p>
           <ol className="relative">
-            <span aria-hidden className="absolute left-[7px] top-2 bottom-2 w-px bg-line" />
+            <span aria-hidden className="absolute left-1.75 top-2 bottom-2 w-px bg-line" />
             <Stage n="01" label="Planning" state={plannerState} note={plan ? "plan ready" : "reading your idea"} />
             <Stage
               n="02"
@@ -215,7 +228,7 @@ export default function GenerateForm() {
               label="Coding"
               state={coderState}
               note={
-                coder
+                coder && coder.total > 0
                   ? `${Math.min(coder.step, coder.total)} / ${coder.total} files`
                   : "writing files"
               }
@@ -244,7 +257,7 @@ export default function GenerateForm() {
             <span className="h-2 w-2 rounded-full bg-danger" />
             <p className="text-sm font-medium text-danger">Build failed</p>
           </div>
-          <p className="mt-2 break-words font-mono text-xs leading-relaxed text-danger/85">{error}</p>
+          <p className="mt-2 wrap-break-word font-mono text-xs leading-relaxed text-danger/85">{error}</p>
           <p className="mt-3 text-xs text-muted">
             Try a different model from the selector above, then build again.
           </p>

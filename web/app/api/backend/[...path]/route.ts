@@ -32,32 +32,9 @@ async function proxy(req: NextRequest, path: string[]): Promise<Response> {
   const respHeaders = new Headers();
   const upstreamContentType = upstream.headers.get("content-type");
   if (upstreamContentType) respHeaders.set("content-type", upstreamContentType);
-  respHeaders.set("cache-control", "no-cache, no-transform");
-  respHeaders.set("x-accel-buffering", "no"); // disable proxy buffering for SSE
+  respHeaders.set("cache-control", "no-store");
 
-  if (!upstream.body) {
-    return new Response(null, { status: upstream.status, headers: respHeaders });
-  }
-
-  // Explicitly pump the upstream body so chunks flush as they arrive (SSE) rather
-  // than being buffered until the whole response completes.
-  const stream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const reader = upstream.body!.getReader();
-      try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          controller.enqueue(value);
-        }
-        controller.close();
-      } catch (err) {
-        controller.error(err);
-      }
-    },
-  });
-
-  return new Response(stream, { status: upstream.status, headers: respHeaders });
+  return new Response(upstream.body, { status: upstream.status, headers: respHeaders });
 }
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {

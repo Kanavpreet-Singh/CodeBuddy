@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import FileViewer from "@/components/FileViewer";
+import FixPanel from "@/components/FixPanel";
 import RunPanel from "@/components/RunPanel";
 import StatusPill from "@/components/StatusPill";
 import { apiFetch } from "@/lib/api";
@@ -68,6 +69,12 @@ export default async function AppDetailPage({ params }: { params: Promise<{ id: 
         <section className="mt-10">
           <p className="kicker mb-3">Run</p>
           <RunPanel appId={app.id} />
+        </section>
+      )}
+
+      {(app.files?.length ?? 0) > 0 && (
+        <section className="mt-10">
+          <FixPanel appId={app.id} />
         </section>
       )}
 
