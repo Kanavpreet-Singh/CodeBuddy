@@ -2,6 +2,20 @@ def planner_prompt(user_prompt: str) -> str:
     PLANNER_PROMPT = f"""
 You are the PLANNER agent. Convert the user prompt into a COMPLETE engineering project plan.
 
+The generated project must be SELF-CONTAINED and RUNNABLE in a single sandbox with
+no external services. Follow these rules unless the user explicitly asks otherwise:
+- Build ONE service, not a multi-service architecture. Prefer a single web app that
+  serves both its API and its UI from one process.
+- For Python, prefer Flask or FastAPI in a single `app.py` (or `main.py`), served on
+  0.0.0.0. For Node, prefer a single Express server in `index.js` (or `server.js`).
+- Use SQLite or in-memory storage. Do NOT use databases that need a separate server
+  (no MongoDB, Postgres, MySQL, Redis).
+- ALWAYS include a dependency manifest so the app can be installed and run:
+  `requirements.txt` for Python, or `package.json` (with a "start" script and all
+  dependencies) for Node. Keep all source files at the project root or a single
+  shallow folder — avoid separate `client/` and `server/` trees.
+- Keep the app minimal and immediately runnable with one command.
+
 User request:
 {user_prompt}
     """

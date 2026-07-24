@@ -25,6 +25,8 @@ async def run_app_endpoint(app_id: str, user_id: str = Depends(rate_limit_run)):
 
     try:
         result = await sandbox.run_app(files)
+    except sandbox.UnrunnableAppError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Sandbox run failed: {exc}")
 
