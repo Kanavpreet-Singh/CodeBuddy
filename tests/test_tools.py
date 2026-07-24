@@ -82,3 +82,36 @@ def test_edit_file_ambiguous_match_errors(project_root):
 def test_edit_file_nonexistent_file_errors(project_root):
     result = edit_file.invoke({"path": "missing.py", "old_string": "a", "new_string": "b"})
     assert result.startswith("ERROR")
+
+
+def test_write_file_rejects_invalid_python_syntax(project_root):
+    # Reproduces a real failure: two garbled `def calculate():` headers left the
+    # generated app.py with a SyntaxError, which crashed the app on startup and
+    # only surfaced as an opaque 502 in the sandbox — much too late to act on.
+    broken = "def calculate():\n        def calculate():\ndef calculate():\n    return 1\n"
+    result = write_file.invoke({"path": "app.py", "content": broken})
+    assert result.startswith("ERROR")
+    assert "SyntaxError" in result
+    assert not (project_root / "app.py").exists()
+
+
+def test_write_file_allows_valid_python_syntax(project_root):
+    result = write_file.invoke({"path": "app.py", "content": "def f():\n    return 1\n"})
+    assert result.startswith("WROTE")
+
+
+def test_write_file_does_not_syntax_check_non_python_files(project_root):
+    # Deliberately "invalid Python" text is fine in a non-.py file.
+    result = write_file.invoke({"path": "notes.txt", "content": "def calculate(:::: broken"})
+    assert result.startswith("WROTE")
+
+
+def test_edit_file_rejects_edit_that_breaks_syntax(project_root):
+    write_file.invoke({"path": "app.py", "content": "def f():\n    return 1\n"})
+    result = edit_file.invoke(
+        {"path": "app.py", "old_string": "def f():\n    return 1\n", "new_string": "def f(:\n    return 1\n"}
+    )
+    assert result.startswith("ERROR")
+    assert "SyntaxError" in result
+    # Original valid content must be untouched, not left half-edited.
+    assert read_file.invoke({"path": "app.py"}) == "def f():\n    return 1\n"

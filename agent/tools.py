@@ -1,3 +1,4 @@
+import ast
 import pathlib
 import subprocess
 from contextvars import ContextVar
@@ -44,10 +45,32 @@ def _ensure_dir(directory: pathlib.Path) -> None:
         cur.mkdir(exist_ok=True)
 
 
+def _python_syntax_error(path: pathlib.Path, content: str) -> Optional[str]:
+    """Returns a description of the syntax error in `content` if it's a .py file
+    with invalid syntax, else None. Catching this at write-time (rather than only
+    at run time in the sandbox) prevents a bad edit from ever landing on disk —
+    e.g. an edit_file/write_file call that garbles two function definitions
+    together, which otherwise silently crashes the app on startup much later."""
+    if path.suffix != ".py":
+        return None
+    try:
+        ast.parse(content)
+        return None
+    except SyntaxError as e:
+        pointer = f" near: {e.text.strip()!r}" if e.text else ""
+        return f"SyntaxError: {e.msg} at line {e.lineno}{pointer}"
+
+
 @tool
 def write_file(path: str, content: str) -> str:
     """Writes content to a file at the specified path within the project root."""
     p = safe_path_for_project(path)
+    error = _python_syntax_error(p, content)
+    if error:
+        return (
+            f"ERROR: not written — this content has invalid Python syntax: {error}. "
+            "Fix the syntax and call write_file again with corrected content."
+        )
     _ensure_dir(p.parent)
     with open(p, "w", encoding="utf-8") as f:
         f.write(content)
@@ -80,7 +103,15 @@ def edit_file(path: str, old_string: str, new_string: str) -> str:
             f"ERROR: old_string matches {count} locations in the file, not 1. "
             "Include more surrounding context so it uniquely identifies one location."
         )
-    p.write_text(content.replace(old_string, new_string, 1), encoding="utf-8")
+    new_content = content.replace(old_string, new_string, 1)
+    error = _python_syntax_error(p, new_content)
+    if error:
+        return (
+            f"ERROR: not applied — this edit would leave invalid Python syntax: {error}. "
+            "Re-read the file, check indentation and surrounding braces/colons, and "
+            "try edit_file again with a corrected old_string/new_string."
+        )
+    p.write_text(new_content, encoding="utf-8")
     return f"EDITED:{p}"
 
 
