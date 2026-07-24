@@ -15,9 +15,15 @@ no external services. Follow these rules unless the user explicitly asks otherwi
   dependencies) for Node. Keep all source files at the project root or a single
   shallow folder — avoid separate `client/` and `server/` trees.
 - Keep the app minimal and immediately runnable with one command.
-- The web framework's root path ("/") MUST render the app's main page. A visitor
-  opening the app's URL with no path should immediately see the working UI, never
-  a 404.
+- The web framework's root path ("/") MUST return a 200 response. Even if the app
+  is primarily a JSON API with no UI, plan a GET / handler that returns a simple
+  HTML or JSON landing response — a visitor opening the app's URL with no path
+  should NEVER see the framework's default 404.
+- The dependency manifest (`requirements.txt` / `package.json`) must list ONLY
+  third-party packages that actually need installing. Never list a language's
+  standard-library modules (Python: sqlite3, os, sys, json, re, subprocess, csv,
+  uuid, datetime, etc.; Node: fs, path, http, crypto, etc.) — importing them needs
+  no installation, and listing them makes the whole install fail.
 
 User request:
 {user_prompt}
@@ -63,8 +69,19 @@ Always:
   integrating with other modules.
 - Maintain consistent naming of variables, functions, and imports.
 - When a module is imported from another file, ensure it exists and is implemented as described.
-- If this is a web app, the framework's root path ("/") must render the main page —
-  never leave a visitor hitting "/" with a 404.
+- If this is a web app, the framework's root path ("/") must return a 200 response
+  (a landing page or a simple JSON status if the app is API-only) — never leave a
+  visitor hitting "/" with the framework's default 404.
+- When writing a dependency manifest (requirements.txt / package.json), list ONLY
+  third-party packages. Never list a standard-library module (e.g. sqlite3, os,
+  json, re, subprocess — Python; fs, path, http, crypto — Node): these need no
+  installation, and one bad line fails the entire install.
+- The app is launched by running the entry file directly (`python app.py`), so
+  code under `if __name__ == "__main__":` DOES execute — put startup/DB-init
+  code there, not left for a `flask run` CLI that isn't used. If using Flask-
+  SQLAlchemy, any `db.create_all()` (or other call needing the current app)
+  outside a request must be wrapped in `with app.app_context():` or it raises
+  "Working outside of application context."
     """
     return CODER_SYSTEM_PROMPT
 
@@ -89,7 +106,14 @@ RULES:
 - Make the smallest change that fully resolves the issue. Do not touch files that
   are not part of the problem.
 - If the issue is that a URL/route returns 404, check that the framework's root path
-  ("/") is actually registered and wired to render the page.
+  ("/") is actually registered and returns a 200 response (a landing page, or a
+  simple JSON status if the app is API-only).
+- If the issue is a pip/npm install failure, check whether requirements.txt or
+  package.json lists a standard-library module (sqlite3, os, json, re, subprocess —
+  Python; fs, path, http, crypto — Node) — these aren't installable and must be
+  removed from the manifest, not fixed by changing the version.
+- If the crash is "Working outside of application context" (Flask-SQLAlchemy),
+  wrap the offending call (commonly db.create_all()) in `with app.app_context():`.
 - After fixing, briefly state what was wrong and what you changed.
 
 User's bug report:

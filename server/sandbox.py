@@ -1,11 +1,34 @@
 import os
 import posixpath
+import re
+import sys
 from dataclasses import dataclass
 from typing import Optional
 
 from e2b import AsyncSandbox
 
 REMOTE_APP_DIR = "/home/user/app"
+
+# Modules the coder sometimes lists in requirements.txt out of habit (it does
+# `import sqlite3`, so it "looks like a dependency"), but they ship with Python
+# itself and have no installable PyPI distribution — pip fails the ENTIRE
+# install if even one such line is present. Strip them defensively rather than
+# relying on prompt compliance alone.
+_STDLIB_MODULES = set(sys.stdlib_module_names) | {"sqlite3"}  # belt-and-braces
+
+
+def _strip_stdlib_requirements(content: str) -> str:
+    kept_lines = []
+    for line in content.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            kept_lines.append(line)
+            continue
+        name = re.split(r"[=<>!~\[; ]", stripped, maxsplit=1)[0].strip().lower()
+        if name in _STDLIB_MODULES:
+            continue
+        kept_lines.append(line)
+    return "\n".join(kept_lines)
 
 
 class UnrunnableAppError(Exception):
@@ -37,6 +60,7 @@ class RunConfig:
     start_cmd: str
     port: Optional[int]
     work_dir: str  # subdirectory (relative to app root) to run from
+    flask_entry: Optional[str] = None  # path needing the app.run() host/port patch below
 
 
 def _basename(path: str) -> str:
@@ -93,7 +117,13 @@ def detect_run_config(files: dict[str, str]) -> RunConfig:
         install = _install_for(names, work_dir)
         base = _basename(entry)
         if "flask" in joined:
-            return RunConfig("web", install, f"flask --app {base[:-3]} run --host 0.0.0.0 --port 5000", 5000, work_dir)
+            # `flask run` never executes `if __name__ == "__main__":`, which is
+            # exactly where LLM-generated Flask apps put DB init and app.run()
+            # — so `flask run` silently skips that setup entirely. Run the file
+            # as a plain script instead (see _ensure_flask_serves below, which
+            # also guarantees it actually binds 0.0.0.0:5000 regardless of what
+            # arguments the generated app.run() call itself used).
+            return RunConfig("web", install, f"python {base}", 5000, work_dir, flask_entry=entry)
         if "fastapi" in joined or "uvicorn" in joined or "starlette" in joined:
             return RunConfig("web", install, f"uvicorn {base[:-3]}:app --host 0.0.0.0 --port 8000", 8000, work_dir)
         return RunConfig("web", install, f"python {base}", 8000, work_dir)
@@ -117,6 +147,33 @@ def detect_run_config(files: dict[str, str]) -> RunConfig:
     )
 
 
+_APP_RUN_RE = re.compile(r"app\.run\(([^)]*)\)")
+
+
+def _ensure_flask_serves(content: str, port: int) -> str:
+    """Guarantees the Flask entry file actually starts a server reachable from
+    outside the sandbox on `port`, regardless of what the generated code wrote.
+
+    Two independent real bugs, both observed in real generated apps:
+    1. `app.run(debug=True)` with no host defaults to 127.0.0.1, which isn't
+       reachable through the sandbox's public preview URL (needs 0.0.0.0).
+    2. Some generated files have no explicit app.run() call at all (assuming
+       `flask run` conventions) — since we now run via `python entry.py` to
+       respect `if __name__ == "__main__":` init code, nothing would start
+       the server in that case unless we add the call ourselves.
+    """
+    match = _APP_RUN_RE.search(content)
+    if match is None:
+        return content.rstrip() + f'\n\nif __name__ == "__main__":\n    app.run(host="0.0.0.0", port={port})\n'
+
+    args = match.group(1)
+    if "host" in args:
+        return content  # already explicit; trust it rather than risk a duplicate kwarg
+    sep = ", " if args.strip() else ""
+    patched_call = f'app.run(host="0.0.0.0", port={port}{sep}{args})'
+    return content[: match.start()] + patched_call + content[match.end() :]
+
+
 def _install_for(names: list[str], work_dir: str) -> Optional[str]:
     reqs = [n for n in names if _basename(n) == "requirements.txt"]
     if not reqs:
@@ -129,7 +186,13 @@ def _install_for(names: list[str], work_dir: str) -> Optional[str]:
 
 
 async def run_app(files: dict[str, str]) -> RunResult:
+    files = {
+        path: (_strip_stdlib_requirements(content) if _basename(path) == "requirements.txt" else content)
+        for path, content in files.items()
+    }
     cfg = detect_run_config(files)
+    if cfg.flask_entry and cfg.port:
+        files = {**files, cfg.flask_entry: _ensure_flask_serves(files[cfg.flask_entry], cfg.port)}
     run_dir = REMOTE_APP_DIR if cfg.work_dir in (".", "") else f"{REMOTE_APP_DIR}/{cfg.work_dir}"
 
     sbx = await AsyncSandbox.create(timeout=get_timeout())
