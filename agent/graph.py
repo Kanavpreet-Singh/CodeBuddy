@@ -1,3 +1,5 @@
+import asyncio
+
 from langchain.agents import create_agent
 from langchain_core.globals import set_debug, set_verbose
 from langgraph.graph import END, START, StateGraph
@@ -8,10 +10,10 @@ from agent.tools import get_current_directory, init_project_root, list_files, re
 from helper.llm import llm
 
 
-def planner_agent(state: State) -> dict:
+async def planner_agent(state: State) -> dict:
     """Converts user prompt into a structured Plan."""
     user_prompt = state["user_prompt"]
-    resp = llm.with_structured_output(Plan).invoke(
+    resp = await llm.with_structured_output(Plan).ainvoke(
         planner_prompt(user_prompt)
     )
     if resp is None:
@@ -19,10 +21,10 @@ def planner_agent(state: State) -> dict:
     return {"plan": resp}
 
 
-def architect_agent(state: State) -> dict:
+async def architect_agent(state: State) -> dict:
     """Creates TaskPlan from Plan."""
     plan: Plan = state["plan"]
-    resp = llm.with_structured_output(TaskPlan).invoke(
+    resp = await llm.with_structured_output(TaskPlan).ainvoke(
         architect_prompt(plan=plan.model_dump_json())
     )
     if resp is None:
@@ -36,7 +38,7 @@ coder_tools = [read_file, write_file, list_files, get_current_directory]
 coder_react_agent = create_agent(model=llm, tools=coder_tools, system_prompt=coder_system_prompt())
 
 
-def coder_agent(state: State) -> dict:
+async def coder_agent(state: State) -> dict:
     """LangGraph tool-using coder agent."""
     coder_state: CoderState = state.get("coder_state")
     if coder_state is None:
@@ -48,7 +50,7 @@ def coder_agent(state: State) -> dict:
         return {"coder_state": coder_state, "status": "DONE"}
 
     current_task = steps[coder_state.current_step_idx]
-    existing_content = read_file.invoke(current_task.filepath)
+    existing_content = await read_file.ainvoke(current_task.filepath)
 
     user_prompt = (
         f"Task: {current_task.task_description}\n"
@@ -57,7 +59,7 @@ def coder_agent(state: State) -> dict:
         "Use write_file(path, content) to save your changes."
     )
 
-    coder_react_agent.invoke({"messages": [{"role": "user", "content": user_prompt}]})
+    await coder_react_agent.ainvoke({"messages": [{"role": "user", "content": user_prompt}]})
 
     coder_state.current_step_idx += 1
     return {"coder_state": coder_state}
@@ -78,8 +80,13 @@ graph_builder.add_conditional_edges("coder", route_after_coder, {"coder": "coder
 
 agent_graph = graph_builder.compile()
 
-if __name__ == "__main__":
+
+async def _main() -> None:
     set_debug(True)
     set_verbose(True)
-    result = agent_graph.invoke({"user_prompt": "A CLI todo app in Python"})
+    result = await agent_graph.ainvoke({"user_prompt": "A CLI todo app in Python"})
     print(result["status"])
+
+
+if __name__ == "__main__":
+    asyncio.run(_main())
