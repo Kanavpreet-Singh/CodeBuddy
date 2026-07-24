@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 load_dotenv()
 
 from server import db  # noqa: E402  (import after load_dotenv so env is available)
-from server.routers import apps  # noqa: E402
+from server.routers import apps, run  # noqa: E402
 
 
 @asynccontextmanager
@@ -30,6 +30,7 @@ app.add_middleware(
 )
 
 app.include_router(apps.router)
+app.include_router(run.router)
 
 
 @app.get("/api/healthz")

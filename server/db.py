@@ -1,7 +1,7 @@
 import json
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import asyncpg
@@ -149,3 +149,35 @@ async def get_app_files(app_id: str) -> list[dict]:
         app_id,
     )
     return [dict(r) for r in rows]
+
+
+async def create_sandbox_run(
+    app_id: str,
+    sandbox_id: str,
+    preview_url: Optional[str],
+    status: str,
+    ttl_seconds: int,
+) -> datetime:
+    pool = _pool_or_raise()
+    expires_at = _now() + timedelta(seconds=ttl_seconds)
+    await pool.execute(
+        'INSERT INTO "SandboxRun" ("id","appId","sandboxId","previewUrl","status","expiresAt") '
+        "VALUES ($1,$2,$3,$4,$5,$6)",
+        _new_id(),
+        app_id,
+        sandbox_id,
+        preview_url,
+        status,
+        expires_at,
+    )
+    return expires_at
+
+
+async def mark_sandbox_stopped(sandbox_id: str) -> None:
+    pool = _pool_or_raise()
+    await pool.execute(
+        'UPDATE "SandboxRun" SET "status"=$2,"stoppedAt"=$3 WHERE "sandboxId"=$1',
+        sandbox_id,
+        "STOPPED",
+        _now(),
+    )

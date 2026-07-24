@@ -3,6 +3,7 @@ import { notFound, redirect } from "next/navigation";
 
 import { auth } from "@/auth";
 import FileViewer from "@/components/FileViewer";
+import RunPanel from "@/components/RunPanel";
 import { apiFetch } from "@/lib/api";
 
 type FileMeta = { path: string; purpose: string | null; sizeBytes: number | null };
@@ -57,6 +58,13 @@ export default async function AppDetailPage({ params }: { params: Promise<{ id: 
               <li key={f}>{f}</li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {app.status === "DONE" && (
+        <div className="mt-6">
+          <h2 className="text-xs font-semibold uppercase tracking-wide opacity-50">Run</h2>
+          <RunPanel appId={app.id} />
         </div>
       )}
 
